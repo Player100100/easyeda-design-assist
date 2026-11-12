@@ -130,7 +130,7 @@ class BridgeClient:
             raise BridgeError("bridge 窗口列表格式不兼容")
         return [w for w in windows if w.get("connected") is True]
 
-    def capture(self, window_id: str | None = None) -> dict:
+    def _read_fixed(self, code: str, window_id: str | None = None) -> tuple[dict, str]:
         self.health()
         windows = self.windows()
         ids = [w.get("windowId") for w in windows]
@@ -142,7 +142,7 @@ class BridgeClient:
             window_id = ids[0]
         if not isinstance(window_id, str) or not window_id or window_id not in ids:
             raise BridgeError("指定的 EDA 窗口未连接")
-        reply = self._request("/execute", {"code": CONTEXT_QUERY, "windowId": window_id})
+        reply = self._request("/execute", {"code": code, "windowId": window_id})
         if not isinstance(reply, dict) or reply.get("success") is not True:
             raise BridgeError(f"读取失败：{reply}")
         if reply.get("windowId") != window_id:
@@ -150,6 +150,15 @@ class BridgeClient:
         result = reply.get("result")
         if not isinstance(result, dict):
             raise BridgeError("bridge 上下文返回格式不兼容")
+        return result, window_id
+
+    def schematic(self, window_id: str | None = None) -> dict:
+        from .schematic import SCHEMATIC_QUERY, make_snapshot
+        result, window_id = self._read_fixed(SCHEMATIC_QUERY, window_id)
+        return make_snapshot(result, self.port, window_id)
+
+    def capture(self, window_id: str | None = None) -> dict:
+        result, window_id = self._read_fixed(CONTEXT_QUERY, window_id)
         from .contracts import validate_context
         limitations = ["当前仅采集工程/文档元数据及所选图元；不代表完整电气连接或板级几何快照。",
                        "读取不是事务快照；焦点文档和选中集合已复核，文档内部并发编辑未被检测。"]

@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .contracts import MODES, validate_task
+from .guidance import guide
 from .storage import digest, external, initialize, new_id, now, read_json, write_new
 
 
@@ -22,7 +23,7 @@ def create_task(mode: str, goal: str, constraints: list[str], context=None) -> P
         f"# {MODES[mode][0]}\n\n目标：{goal}\n\n"
         "请按 docs/workflow.md 补充工况与来源，更新 task.json。初稿不包含分析结论。\n\n"
         "待补输入：\n\n" + "\n".join(f"- {x}" for x in task["missing_inputs"]) +
-        "\n\n记录完整性校验：`python -B src/design_assist.py validate-task <task.json>`\n",
+        "\n\n记录完整性校验：`python -B src/design_assist.py validate-task <task.json>`\n\n" + guide(mode),
         encoding="utf-8")
     return path
 

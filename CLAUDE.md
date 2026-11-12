@@ -2,7 +2,7 @@
 
 ## 目标
 
-在用户绘制嘉立创EDA设计时，结合当前工程上下文、器件资料和明确约束，提供可追溯的选型、拓扑、原理图和 PCB 建议。现阶段以只读建议为边界。
+为 agent 提供辅助绘板的工程思路和嘉立创EDA只读信息工具，弥补其辅助绘板时的方法缺口。绘制者提问后，agent 查询实际元件与网络、按需查阅原手册、推导并给出建议。
 
 ## 边界与规则
 
@@ -14,7 +14,7 @@
 - PCB 布线/铺铜建议必须声明依赖的电流、层叠、回流路径、阻抗、板厂规则等条件；缺条件则先询问或给定假设。
 - 用户的设计意图、约束和采纳决定须留在任务记录中，不覆盖原始 CAD 文件。
 - 任务数据写入项目旁的 `easyeda-设计助手-data/`，不要把实时快照、手册副本或任务档案写入源码目录。
-- 新任务开始前阅读 `docs/architecture.md` 与 `docs/workflow.md`；涉及 API 时使用本机 `easyeda-api-skill` 的最新 API 文档。
+- 新任务开始前阅读 `docs/architecture.md`、`docs/workflow.md`、`docs/agent-guide.md` 和对应模式 playbook；涉及 API 时使用本机 `easyeda-api-skill` 的最新 API 文档。
 
 ## 当前能力
 
@@ -23,10 +23,12 @@
 - `python -B src/design_assist.py connect`：复用或后台启动已安装的本地 bridge，等待 EDA API Gateway 接入；Windows 可运行 `start-api.cmd`。
 - `python -B src/design_assist.py context`：只读获取当前工程、焦点文档、所选图元 ID 和固定类型属性，生成 v2 上下文。
 - `python -B src/design_assist.py new-task --mode <模式> --goal <目标>`：创建结构化辅助任务档案。
-- `python -B src/design_assist.py import-datasheet <任务.json> <文件>`：保留本地手册原件并追加带页码的未核对候选摘录，生成新的任务版本。
+- `guide --mode selection` 提供选型方法；新任务 brief 自动包含对应指引。
+- `schematic --save` 归档只读原理图网表；`inspect <快照> --designator U1` 查询关联元件及网络。
+- `import-datasheet <任务.json> <文件>` 保留手册原件和文字索引；`datasheet-search` 按需查询，`datasheet-page` 查看完整页。
 - `python -B src/design_assist.py validate-task <任务.json>`：检查建议是否具备证据、假设、风险与验证办法。
 
-`connect` 只启动 bridge 并报告客户端状态，不启用/安装扩展，不切换窗口或 CAD 文档。手册关键词摘录都是 `candidate`；对照原页后填写 `review_record` 才可成为可核对来源。默认只读与不得执行任意 JavaScript 的规则不变。
+`connect` 只启动 bridge 并报告客户端状态，不启用/安装扩展，不切换窗口或 CAD 文档。手册按问题查阅，搜索不证明参数事实；不同快照或板卡不得仅按同名网合并。
 
 ## 目录
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 import hashlib
 import importlib.util
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -10,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from easyeda_assist.contracts import validate_task
-from easyeda_assist.datasheets import component_identity, extract_pages, find_passages, import_datasheet
+from easyeda_assist.datasheets import component_identity, extract_pages, import_datasheet, search_document, read_page
 from easyeda_assist.storage import read_json
 from easyeda_assist.tasks import create_task, handoff
 
@@ -22,23 +23,33 @@ TEXT = ("Fictional TEST-REG-123 Rev A\nAbsolute Maximum Ratings\nVIN -0.3 to 35 
 
 
 class DatasheetTests(unittest.TestCase):
-    def test_passages_keep_physical_page_and_exact_text_without_inference(self):
-        pages, extractor = extract_pages(TEXT.encode("utf-8"), ".txt")
-        self.assertEqual(extractor, "utf8-text")
-        passages, coverage = find_passages(pages)
-        maximum = next(p for p in passages if p["category"] == "absolute_maximum")
-        operating = next(p for p in passages if p["category"] == "operating_conditions" and p["page"] == 2)
-        self.assertEqual(maximum["page"], 1)
-        self.assertEqual(operating["page"], 2)
-        self.assertIn("35 V", maximum["quote"])
-        self.assertIn("20 V", operating["quote"])
-        negation = next(p for p in passages if p["category"] == "operating_conditions" and p["page"] == 1)
-        self.assertIn("Not a recommended operating voltage.", negation["quote"])
-        for passage in passages:
-            lines = pages[passage["page"] - 1].splitlines()
-            self.assertEqual(passage["quote"], "\n".join(lines[passage["line_start"] - 1:passage["line_end"]]))
-            self.assertEqual(passage["review_status"], "candidate")
-        self.assertEqual(coverage["protection"]["passages_found"], 0)
+    def test_lookup_preserves_pages_negation_and_original_and_detects_tampering(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"EASYEDA_ASSIST_DATA_DIR": tmp}):
+            file = Path(tmp) / 'input.txt'
+            file.write_text(TEXT, encoding='utf-8')
+            output = import_datasheet(create_task('datasheet', 'lookup', []), file, mpn='TEST')
+            manifest = Path(read_json(output)['datasheets'][0]['report_path'])
+            result = search_document(manifest, 'recommended operating', limit=1)
+            self.assertTrue(result['truncated'])
+            self.assertEqual(result['total_matches'], 2)
+            self.assertEqual(result['matches'][0]['page'], 1)
+            self.assertIn('Not a recommended operating voltage.', result['matches'][0]['text'])
+            self.assertIn('20 V', read_page(manifest, 2)['text'])
+            self.assertEqual(search_document(manifest, 'not present')['matches'], [])
+            with self.assertRaises(ValueError):
+                read_page(manifest, 0)
+            with self.assertRaises(ValueError):
+                search_document(manifest, '   ')
+            index = manifest.parent / 'pages.json'
+            original_index = index.read_bytes()
+            index.write_text('[]', encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, '文字索引 SHA256'):
+                search_document(manifest, 'VIN')
+            index.write_bytes(original_index)
+            archived = Path(read_json(manifest)['archived_path'])
+            archived.write_bytes(b'changed')
+            with self.assertRaisesRegex(ValueError, '原件 SHA256'):
+                read_page(manifest, 1)
 
     def test_import_creates_new_task_archives_original_and_does_not_verify_sources(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"EASYEDA_ASSIST_DATA_DIR": tmp}):
@@ -56,13 +67,45 @@ class DatasheetTests(unittest.TestCase):
             self.assertEqual(task["status"], "analyzing")
             self.assertTrue(task["missing_inputs"])
             self.assertTrue(all(s["review_status"] == "candidate" for s in task["sources"]))
+            self.assertEqual(len(task['sources']), 1)
             report = read_json(Path(task["datasheets"][0]["report_path"]))
             self.assertEqual(report["identity"]["document_match"], "unverified")
             self.assertEqual(report["revision_status"], "unverified")
             self.assertEqual(Path(report["archived_path"]).read_bytes(), file.read_bytes())
             self.assertEqual(report["sha256"], hashlib.sha256(file.read_bytes()).hexdigest())
+            self.assertNotIn('passages', report)
+            self.assertNotIn('coverage', report)
             manifest = read_json(handoff(output))
             self.assertEqual(manifest["task_id"], task["id"])
+
+    def test_legacy_archive_rebuilds_index_from_original(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"EASYEDA_ASSIST_DATA_DIR": tmp}):
+            original = Path(tmp) / 'old.txt'
+            original.write_text(TEXT, encoding='utf-8')
+            output = import_datasheet(create_task('datasheet', 'lookup', []), original, mpn='TEST')
+            manifest = Path(read_json(output)['datasheets'][0]['report_path'])
+            record = read_json(manifest)
+            record['schema_version'] = 1
+            record.pop('pages_sha256')
+            manifest.write_text(json.dumps(record), encoding='utf-8')
+            (manifest.parent / 'pages.json').write_text('broken old index', encoding='utf-8')
+            self.assertIn('20 V', read_page(manifest, 2)['text'])
+
+    @unittest.skipUnless(importlib.util.find_spec('pypdf') and importlib.util.find_spec('pymupdf'),
+                         'optional PDF dependencies not installed')
+    def test_image_only_pdf_remains_accessible_and_renders_original_page(self):
+        from pypdf import PdfWriter
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"EASYEDA_ASSIST_DATA_DIR": tmp}):
+            file = Path(tmp) / 'scanned.pdf'
+            writer = PdfWriter()
+            writer.add_blank_page(width=300, height=400)
+            writer.write(file)
+            output = import_datasheet(create_task('datasheet', 'lookup', []), file, mpn='TEST')
+            manifest = Path(read_json(output)['datasheets'][0]['report_path'])
+            self.assertEqual(search_document(manifest, 'VIN')['total_matches'], 0)
+            page = read_page(manifest, 1, render=True)
+            self.assertEqual(page['text'], '')
+            self.assertTrue(Path(page['image_path']).read_bytes().startswith(b'\x89PNG\r\n\x1a\n'))
 
     def test_mpn_requires_evidence_not_component_name_and_multiple_objects_need_id(self):
         context = {"selected_primitives": [{"primitive_id": "one", "properties": {
@@ -100,21 +143,15 @@ class DatasheetTests(unittest.TestCase):
             task["sources"][0]["review_record"] = "test reviewer checked original page"
             validate_task(task)
 
-    def test_blank_input_fails_before_creating_a_task(self):
+    def test_blank_text_keeps_access_without_claiming_searchable_content(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"EASYEDA_ASSIST_DATA_DIR": tmp}):
             task = create_task("datasheet", "check", [])
             blank = Path(tmp) / "blank.txt"
             blank.write_text("\n\f", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "未提取到文字"):
-                import_datasheet(task, blank, mpn="TEST")
-            self.assertEqual(len(list((Path(tmp) / "tasks").iterdir())), 1)
-
-    def test_limits_candidate_count_without_claiming_missing_content(self):
-        pages = ["Layout Guidelines\nTest instructions"] * 25
-        passages, coverage = find_passages(pages)
-        self.assertEqual(len(passages), 20)
-        self.assertTrue(coverage["layout"]["truncated"])
-        self.assertEqual(coverage["layout"]["passages_found"], 25)
+            output = import_datasheet(task, blank, mpn="TEST")
+            manifest = Path(read_json(output)['datasheets'][0]['report_path'])
+            self.assertEqual(search_document(manifest, 'VIN')['total_matches'], 0)
+            self.assertTrue(any('未提取到文字' in x for x in read_json(manifest)['limitations']))
 
     @unittest.skipUnless(importlib.util.find_spec("pypdf"), "optional pypdf not installed")
     def test_real_pdf_extraction_preserves_pages_and_rejects_image_only_pages(self):
