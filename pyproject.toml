@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "easyeda-design-assist"
+version = "0.1.0"
+description = "Read-only context and evidence-based design assistance workflow for EasyEDA"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+easyeda-assist = "easyeda_assist.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

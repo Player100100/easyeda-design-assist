@@ -1,0 +1,119 @@
+"""Fixed read operations over the existing API Gateway HTTP protocol.
+
+No dependency on audit project's process lifecycle or state directory.
+"""
+from __future__ import annotations
+
+import json
+import urllib.error
+import urllib.request
+
+from .storage import now
+
+# Signatures checked against easyeda-api-skill 1.1.29. Numeric document
+# types: SCHEMATIC_PAGE=1, PCB=3. This script never activates a document.
+CONTEXT_QUERY = """
+const project=await eda.dmt_Project.getCurrentProjectInfo();
+const document=await eda.dmt_SelectControl.getCurrentDocumentInfo();
+if(!project||!document)throw new Error('请打开目标工程和原理图页或PCB');
+let domain=null;let selected=[];
+if(document.documentType===1){domain='schematic';selected=await eda.sch_SelectControl.getAllSelectedPrimitives_PrimitiveId();}
+else if(document.documentType===3){domain='pcb';selected=await eda.pcb_SelectControl.getAllSelectedPrimitives_PrimitiveId();}
+else throw new Error('当前焦点文档不是原理图页或PCB（documentType='+String(document.documentType)+'）；请点击目标原理图页或PCB画布后重试');
+const after=await eda.dmt_SelectControl.getCurrentDocumentInfo();
+const projectAfter=await eda.dmt_Project.getCurrentProjectInfo();
+if(!projectAfter||project.uuid!==projectAfter.uuid||!after||after.uuid!==document.uuid||after.tabId!==document.tabId||after.documentType!==document.documentType||after.parentProjectUuid!==document.parentProjectUuid)throw new Error('读取期间工程或焦点文档变化，请重新采集');
+return {project,document,domain,selected_ids:selected};
+""".replace("\n", "")
+
+
+class BridgeError(RuntimeError):
+    pass
+
+
+class BridgeClient:
+    def __init__(self, port: int, timeout: float = 10):
+        if not 1 <= port <= 65535 or timeout <= 0:
+            raise ValueError("bridge 端口或超时无效")
+        self.base = f"http://127.0.0.1:{port}"
+        self.port = port
+        self.timeout = timeout
+        # A local bridge must not be routed via user-configured HTTP proxies.
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+    def _request(self, route: str, payload=None):
+        body = None if payload is None else json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(self.base + route, data=body,
+                                         headers={"Content-Type": "application/json"})
+        try:
+            with self.opener.open(request, timeout=self.timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                error = json.loads(exc.read(65536).decode("utf-8"))
+                if isinstance(error, dict) and isinstance(error.get("error"), str):
+                    detail = error["error"].strip()[:2000]
+            except (OSError, ValueError):
+                pass
+            finally:
+                exc.close()
+            suffix = f"：{detail}" if detail else ""
+            raise BridgeError(f"bridge {route} 请求失败（HTTP {exc.code}）{suffix}") from exc
+        except (OSError, ValueError) as exc:
+            raise BridgeError(f"bridge {route} 请求失败：{exc}") from exc
+
+    def health(self) -> dict:
+        result = self._request("/health")
+        if not isinstance(result, dict) or result.get("service") != "easyeda-bridge":
+            raise BridgeError("端口不是 EasyEDA bridge")
+        return result
+
+    def windows(self) -> list[dict]:
+        result = self._request("/eda-windows")
+        windows = result.get("windows") if isinstance(result, dict) else None
+        if not isinstance(windows, list) or any(not isinstance(w, dict) for w in windows):
+            raise BridgeError("bridge 窗口列表格式不兼容")
+        return [w for w in windows if w.get("connected") is True]
+
+    def capture(self, window_id: str | None = None) -> dict:
+        self.health()
+        windows = self.windows()
+        ids = [w.get("windowId") for w in windows]
+        if not ids:
+            raise BridgeError("没有已连接的 EDA 窗口；请加载 API Gateway 并连接 bridge")
+        if window_id is None:
+            if len(ids) != 1:
+                raise BridgeError("多个 EDA 窗口，请用 --window-id 指定：" + ", ".join(map(str, ids)))
+            window_id = ids[0]
+        if not isinstance(window_id, str) or not window_id or window_id not in ids:
+            raise BridgeError("指定的 EDA 窗口未连接")
+        reply = self._request("/execute", {"code": CONTEXT_QUERY, "windowId": window_id})
+        if not isinstance(reply, dict) or reply.get("success") is not True:
+            raise BridgeError(f"读取失败：{reply}")
+        if reply.get("windowId") != window_id:
+            raise BridgeError("bridge 返回窗口与请求不一致")
+        result = reply.get("result")
+        if not isinstance(result, dict):
+            raise BridgeError("bridge 上下文返回格式不兼容")
+        from .contracts import validate_context
+        context = {"schema_version": 1, "source": "live-api", "captured_at": now(),
+                   "bridge_port": self.port, "window_id": window_id,
+                   **{key: result.get(key) for key in ("project", "document", "domain", "selected_ids")},
+                   "limitations": ["仅采集工程/文档元数据和选中ID，未读取连接、图元详情或几何。",
+                                    "读取不是事务快照；文档内的并发编辑未被检测。"]}
+        validate_context(context)
+        return context
+
+
+def discover(port: int | None = None) -> BridgeClient:
+    candidates = [port] if port is not None else range(49620, 49630)
+    for candidate in candidates:
+        client = BridgeClient(candidate, timeout=1)
+        try:
+            client.health()
+        except BridgeError:
+            continue
+        client.timeout = 15
+        return client
+    raise BridgeError("未发现 EasyEDA bridge；请启动已安装的 API Gateway bridge。默认端口 49620–49629。")

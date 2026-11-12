@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "source": "fixture",
+  "captured_at": "2026-11-12T00:00:00Z",
+  "project": {"uuid": "example-project", "name": "仅用于离线演示的虚构工程"},
+  "document": {"uuid": "example-page", "documentType": 1, "parentProjectUuid": "example-project"},
+  "domain": "schematic",
+  "selected_ids": ["example-primitive"],
+  "limitations": ["虚构样例，不来自真实 CAD，不能用于工程结论。"]
+}
