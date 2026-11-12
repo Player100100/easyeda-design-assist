@@ -20,9 +20,13 @@
 
 - `python -B src/design_assist.py init`：初始化外部数据目录。
 - `python -B src/design_assist.py status`：查询 bridge 与连接窗口状态。
+- `python -B src/design_assist.py connect`：复用或后台启动已安装的本地 bridge，等待 EDA API Gateway 接入；Windows 可运行 `start-api.cmd`。
 - `python -B src/design_assist.py context`：只读获取当前工程、焦点文档、所选图元 ID 和固定类型属性，生成 v2 上下文。
 - `python -B src/design_assist.py new-task --mode <模式> --goal <目标>`：创建结构化辅助任务档案。
+- `python -B src/design_assist.py import-datasheet <任务.json> <文件>`：保留本地手册原件并追加带页码的未核对候选摘录，生成新的任务版本。
 - `python -B src/design_assist.py validate-task <任务.json>`：检查建议是否具备证据、假设、风险与验证办法。
+
+`connect` 只启动 bridge 并报告客户端状态，不启用/安装扩展，不切换窗口或 CAD 文档。手册关键词摘录都是 `candidate`；对照原页后填写 `review_record` 才可成为可核对来源。默认只读与不得执行任意 JavaScript 的规则不变。
 
 ## 目录
 

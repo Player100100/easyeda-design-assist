@@ -9,6 +9,9 @@ description = "Read-only context and evidence-based design assistance workflow f
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+pdf = ["pypdf>=5,<7"]
+
 [project.scripts]
 easyeda-assist = "easyeda_assist.cli:main"
 

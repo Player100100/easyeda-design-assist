@@ -26,6 +26,8 @@
 
 任务初稿包含 `context`（可以为 null）、`constraints`、`missing_inputs`、`sources`、`recommendations`。上下文契约支持 v1（仅选中 ID）和 v2（额外含所选图元属性）。v2 的 `selection_details_status` 为 `captured`、`unavailable`、`id_mismatch` 或 `truncated`；每个已采集对象带 `supported`、`read_errors` 和 `missing_fields`。`captured` 表示对象身份与数量匹配，不表示每个字段都成功读取；属性键保持 API 原名。最多读取 100 个对象详情，截断时仍保留全部 ID。单位为原始 API 值，未完成实板校准；不从局部对象推断完整连接关系。
 
+手册导入派生新的任务 ID，并通过 `parent_task` 保留原任务 ID、路径和哈希；不覆盖父任务。手册页码/行号摘录可以登记为 `sources`，字段 `review_status` 为 `candidate` 或 `reviewed`。未核对候选不能用于 `verified` 建议；人工核对后 `reviewed` 必须有非空 `review_record`。手册原文、逐页文本、完整型号与修订声明、文件 SHA256 保存在外部 data 目录，任务中记录可追踪路径。`handoff` 目前只冻结 task JSON，不会自动复制原件。
+
 初始缺项是分析提示，由 agent 根据实际证据补齐后更新，不会仅凭已输入约束自动清除。`ready_for_user`/`accepted` 不允许残留关键缺项；需要带假设讨论时使用 `analyzing` 或 `needs_input`。`verified` 仅记录这条建议的核验状态，不等于整板审核通过。
 
 每个任务目录包含可编辑的 `task.json`、初始上下文 `initial-context.json` 和作业提示 `brief.md`。后续重新采集使用新任务，不覆盖初始上下文。`handoff` 每次创建新目录，保存这次记录和校验和，未归档外部证据的限制随清单列明。

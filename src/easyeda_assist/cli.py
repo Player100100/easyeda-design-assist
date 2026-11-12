@@ -6,8 +6,10 @@ import sys
 from pathlib import Path
 
 from .bridge import BridgeError, discover
+from .connection import connect as connect_api
 from .contracts import MODES, validate_context, validate_task
-from .storage import external, initialize, new_id, read_json, write_new
+from .datasheets import import_datasheet
+from .storage import external, initialize, new_id, now, read_json, write_new
 from .tasks import create_task, handoff
 
 
@@ -16,6 +18,10 @@ def main(argv=None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("init", help="初始化外部数据目录")
     sub.add_parser("modes", help="列出任务模式和所需输入")
+    connect = sub.add_parser("connect", help="启动 bridge 并等待嘉立创 EDA API Gateway 接入")
+    connect.add_argument("--timeout", type=float, default=60, help="等待客户端秒数，0 表示只启动 bridge")
+    connect.add_argument("--skill-dir", type=Path, help="已安装 easyeda-api-skill 目录")
+    connect.add_argument("--window-id", help="等待指定 EDA 窗口")
     for name in ("status", "context"):
         command = sub.add_parser(name)
         command.add_argument("--port", type=int, help="本机 bridge 端口；默认扫描 49620–49629")
@@ -34,6 +40,13 @@ def main(argv=None) -> int:
     for name in ("validate-task", "handoff"):
         command = sub.add_parser(name)
         command.add_argument("task", type=Path)
+    datasheet = sub.add_parser("import-datasheet", help="导入 PDF 或 UTF-8 文本手册并登记页码摘录候选")
+    datasheet.add_argument("task", type=Path)
+    datasheet.add_argument("file", type=Path)
+    datasheet.add_argument("--manufacturer")
+    datasheet.add_argument("--mpn")
+    datasheet.add_argument("--primitive-id", help="上下文有多个元件时指定目标图元 ID")
+    datasheet.add_argument("--revision", help="声明的手册修订；导入后仍须对照原件核对")
     args = parser.parse_args(argv)
     try:
         if args.command == "init":
@@ -43,6 +56,13 @@ def main(argv=None) -> int:
         elif args.command == "status":
             bridge = discover(args.port)
             result = {"port": bridge.port, "health": bridge.health(), "windows": bridge.windows()}
+        elif args.command == "connect":
+            result = connect_api(args.timeout, args.skill_dir, args.window_id,
+                                 progress=lambda message: print(message, file=sys.stderr, flush=True))
+            result["status_path"] = str(write_new(
+                external(initialize() / "connections" / (new_id("connection") + ".json")),
+                {**result, "captured_at": now()},
+            ))
         elif args.command == "context":
             result = discover(args.port).capture(args.window_id)
             if args.save:
@@ -60,10 +80,17 @@ def main(argv=None) -> int:
         elif args.command == "validate-task":
             validate_task(read_json(args.task))
             result = {"valid": True, "scope": "仅检查记录结构与引用关系，不验证工程正确性"}
-        else:
+        elif args.command == "handoff":
             result = {"manifest_path": str(handoff(args.task))}
+        else:
+            result = {"task_path": str(import_datasheet(args.task, args.file,
+                                                         manufacturer=args.manufacturer, mpn=args.mpn,
+                                                         primitive_id=args.primitive_id, revision=args.revision))}
     except (OSError, ValueError, KeyError, TypeError, BridgeError) as exc:
         print(f"失败：{exc}", file=sys.stderr)
         return 2
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    if args.command == "connect" and result["status"] != "connected":
+        # timeout=0 explicitly asks only for a running bridge.
+        return 0 if args.timeout == 0 and not args.window_id and result["status"] == "waiting_for_client" else 3
     return 0

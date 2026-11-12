@@ -90,12 +90,19 @@ def validate_task(task):
     sources = task.get("sources")
     require(isinstance(sources, list), "sources 必须是数组")
     source_ids = set()
+    unreviewed_sources = set()
     for source in sources:
         require(isinstance(source, dict), "来源必须是对象")
         for key in ("id", "kind", "reference", "locator", "description"):
             require(nonempty(source.get(key)), f"来源缺少 {key}")
         require(source["id"] not in source_ids, "来源 ID 重复")
         source_ids.add(source["id"])
+        if "review_status" in source:
+            require(source["review_status"] in {"candidate", "reviewed"}, "来源 review_status 无效")
+            if source["review_status"] == "candidate":
+                unreviewed_sources.add(source["id"])
+            else:
+                require(nonempty(source.get("review_record")), "已核对来源缺少 review_record")
     recommendations = task.get("recommendations")
     require(isinstance(recommendations, list), "recommendations 必须是数组")
     recommendation_ids = set()
@@ -112,6 +119,8 @@ def validate_task(task):
         require(item.get("confidence") in {"low", "medium", "high"}, "建议置信度无效")
         require(item.get("decision") in {"pending", "accepted", "rejected", "deferred"}, "用户决定无效")
         require(set(item["evidence"]) <= source_ids, "建议引用了不存在的 source ID")
+        if item["status"] == "verified":
+            require(not set(item["evidence"]) & unreviewed_sources, "verified 建议不能引用尚未核对的手册候选")
         require(item["status"] == "needs_input" or bool(item["evidence"]), "工程建议必须引用来源；待补信息可用 needs_input")
         if item["decision"] != "pending":
             require(nonempty(item.get("decision_record")), "已记录用户决定但缺少用户原话/确认记录")
