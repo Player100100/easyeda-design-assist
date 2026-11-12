@@ -26,7 +26,7 @@ def strings(value) -> bool:
 
 
 def validate_context(context):
-    require(isinstance(context, dict) and context.get("schema_version") == 1, "上下文 schema_version 必须为 1")
+    require(isinstance(context, dict) and context.get("schema_version") in {1, 2}, "上下文 schema_version 必须为 1 或 2")
     require(context.get("source") in {"live-api", "fixture", "manual"}, "上下文来源无效")
     require(nonempty(context.get("captured_at")), "上下文缺少采集时间")
     for field in ("project", "document"):
@@ -37,6 +37,40 @@ def validate_context(context):
     owner = context["document"].get("parentProjectUuid")
     require(owner is None or owner == context["project"]["uuid"], "文档归属与当前工程不一致")
     require(strings(context.get("selected_ids")), "selected_ids 必须是字符串数组，可为空")
+    require(len(context["selected_ids"]) == len(set(context["selected_ids"])), "selected_ids 不允许重复")
+    if context["schema_version"] == 2:
+        primitives = context.get("selected_primitives")
+        require(isinstance(primitives, list), "selected_primitives 必须是数组")
+        require(context.get("selection_details_status") in {"captured", "unavailable", "id_mismatch", "truncated"},
+                "selection_details_status 无效")
+        total = context.get("selected_total")
+        require(total is None or type(total) is int and total >= 0, "selected_total 必须为非负整数或 null")
+        error = context.get("selection_details_error")
+        require(error is None or nonempty(error), "selection_details_error 必须为非空字符串或 null")
+        primitive_ids = []
+        for primitive in primitives:
+            require(isinstance(primitive, dict), "所选图元详情必须为对象")
+            require(nonempty(primitive.get("primitive_id")), "所选图元详情缺少 primitive_id")
+            require(primitive["primitive_id"] in context["selected_ids"], "所选图元详情 ID 不在 selected_ids 中")
+            require(isinstance(primitive.get("properties"), dict), "图元 properties 必须为对象")
+            require(strings(primitive.get("read_errors")), "图元 read_errors 必须是字符串数组")
+            require(strings(primitive.get("missing_fields")), "图元 missing_fields 必须是字符串数组")
+            require(type(primitive.get("supported")) is bool, "图元 supported 必须为布尔值")
+            require(nonempty(primitive["properties"].get("primitive_type")), "图元缺少 primitive_type")
+            primitive_ids.append(primitive["primitive_id"])
+        require(len(primitive_ids) == len(set(primitive_ids)), "所选图元详情 ID 重复")
+        if context["selection_details_status"] == "captured":
+            require(set(primitive_ids) == set(context["selected_ids"]) and total == len(primitive_ids),
+                    "captured 详情必须覆盖全部 selected_ids 且数量一致")
+            require(error is None, "captured 状态不应携带详情错误")
+        if context["selection_details_status"] == "unavailable":
+            require(not primitives and total is None and nonempty(error), "不可用的图元详情不可携带部分快照且应说明原因")
+        if context["selection_details_status"] == "truncated":
+            require(bool(primitive_ids) and total == len(context["selected_ids"]) and total > len(primitive_ids)
+                    and error is None,
+                    "truncated 状态与图元数量不符")
+        if context["selection_details_status"] == "id_mismatch":
+            require(not primitives and nonempty(error), "ID 不一致时应丢弃详情并记录原因")
     require(strings(context.get("limitations")), "上下文必须记录 limitations 数组")
 
 

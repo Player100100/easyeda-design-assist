@@ -1,10 +1,22 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "source": "fixture",
   "captured_at": "2026-11-12T00:00:00Z",
   "project": {"uuid": "example-project", "name": "仅用于离线演示的虚构工程"},
   "document": {"uuid": "example-page", "documentType": 1, "parentProjectUuid": "example-project"},
   "domain": "schematic",
   "selected_ids": ["example-primitive"],
+  "selected_primitives": [
+    {
+      "primitive_id": "example-primitive",
+      "properties": {"primitive_type": "Component", "Designator": "U1", "Name": "EXAMPLE_REGULATOR"},
+      "read_errors": [],
+      "missing_fields": ["ManufacturerId"],
+      "supported": true
+    }
+  ],
+  "selected_total": 1,
+  "selection_details_status": "captured",
+  "selection_details_error": null,
   "limitations": ["虚构样例，不来自真实 CAD，不能用于工程结论。"]
 }

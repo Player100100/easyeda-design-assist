@@ -16,10 +16,12 @@ from easyeda_assist.tasks import create_task, handoff
 
 
 def context(domain="schematic"):
-    return {"schema_version": 1, "source": "fixture", "captured_at": "2026-11-12T00:00:00Z",
+    return {"schema_version": 2, "source": "fixture", "captured_at": "2026-11-12T00:00:00Z",
             "project": {"uuid": "project-1"},
             "document": {"uuid": "doc-1", "documentType": 1 if domain == "schematic" else 3},
-            "domain": domain, "selected_ids": [], "limitations": ["fixture only"]}
+            "domain": domain, "selected_ids": [], "selected_primitives": [],
+            "selected_total": 0, "selection_details_status": "captured",
+            "selection_details_error": None, "limitations": ["fixture only"]}
 
 
 def recommendation():
@@ -38,6 +40,55 @@ class ContractTests(unittest.TestCase):
         invalid["document"]["documentType"] = 1
         with self.assertRaisesRegex(ValueError, "不一致"):
             validate_context(invalid)
+
+    def test_context_v1_remains_compatible(self):
+        old = context()
+        old["schema_version"] = 1
+        for key in ("selected_primitives", "selected_total", "selection_details_status", "selection_details_error"):
+            old.pop(key)
+        validate_context(old)
+
+    def test_context_v2_checks_selected_detail_identity_and_status(self):
+        snapshot = context()
+        snapshot["selected_ids"] = ["primitive-1"]
+        snapshot["selected_primitives"] = [{
+            "primitive_id": "primitive-1", "properties": {"primitive_type": "Component", "Designator": "U1"},
+            "read_errors": [], "missing_fields": [], "supported": True
+        }]
+        snapshot["selected_total"] = 1
+        validate_context(snapshot)
+        snapshot["selected_primitives"][0]["primitive_id"] = "other"
+        with self.assertRaisesRegex(ValueError, "不在 selected_ids"):
+            validate_context(snapshot)
+
+    def test_unavailable_context_details_must_not_be_partially_trusted(self):
+        snapshot = context()
+        snapshot.update(selection_details_status="unavailable",
+                        selection_details_error="beta API unavailable")
+        with self.assertRaisesRegex(ValueError, "不可用"):
+            validate_context(snapshot)
+
+    def test_truncated_context_preserves_only_confirmed_selected_ids(self):
+        snapshot = context()
+        snapshot["selected_ids"] = ["primitive-1", "primitive-2"]
+        snapshot["selected_primitives"] = [{
+            "primitive_id": "primitive-1", "properties": {"primitive_type": "Wire"},
+            "read_errors": [], "missing_fields": [], "supported": True
+        }]
+        snapshot.update(selected_total=2, selection_details_status="truncated")
+        validate_context(snapshot)
+        snapshot["selected_total"] = 1
+        with self.assertRaisesRegex(ValueError, "truncated 状态"):
+            validate_context(snapshot)
+
+    def test_mismatched_context_details_are_discarded_and_explained(self):
+        snapshot = context()
+        snapshot.update(selected_total=1, selection_details_status="id_mismatch",
+                        selection_details_error="selection changed")
+        validate_context(snapshot)
+        snapshot["selection_details_error"] = None
+        with self.assertRaisesRegex(ValueError, "ID 不一致"):
+            validate_context(snapshot)
 
     def test_task_rejects_unresolved_source_reference(self):
         task = {"schema_version": 1, "id": "t", "mode": "schematic", "goal": "check",
@@ -107,7 +158,9 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(payload["code"], CONTEXT_QUERY)
         result = context()
         return {"success": True, "windowId": "w1", "result": {
-            k: result[k] for k in ("project", "document", "domain", "selected_ids")}}
+            k: result[k] for k in (
+                "project", "document", "domain", "selected_ids", "selected_primitives",
+                "selected_total", "selection_details_status", "selection_details_error")}}
 
     def test_capture_pins_single_window_and_records_limits(self):
         bridge = BridgeClient(49620)
@@ -116,6 +169,8 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(result["window_id"], "w1")
         self.assertEqual(result["source"], "live-api")
         self.assertTrue(result["limitations"])
+        self.assertEqual(result["schema_version"], 2)
+        self.assertEqual(result["selection_details_status"], "captured")
 
     def test_multiple_windows_cannot_use_implicit_active_window(self):
         bridge = BridgeClient(49620)

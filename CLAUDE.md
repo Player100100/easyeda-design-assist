@@ -20,7 +20,7 @@
 
 - `python -B src/design_assist.py init`：初始化外部数据目录。
 - `python -B src/design_assist.py status`：查询 bridge 与连接窗口状态。
-- `python -B src/design_assist.py context`：只读获取当前工程、活动文档和所选图元 ID。
+- `python -B src/design_assist.py context`：只读获取当前工程、焦点文档、所选图元 ID 和固定类型属性，生成 v2 上下文。
 - `python -B src/design_assist.py new-task --mode <模式> --goal <目标>`：创建结构化辅助任务档案。
 - `python -B src/design_assist.py validate-task <任务.json>`：检查建议是否具备证据、假设、风险与验证办法。
 
