@@ -1,4 +1,4 @@
-"""Fixed read operations over the existing API Gateway HTTP protocol.
+"""Fixed operations over the existing API Gateway HTTP protocol.
 
 No dependency on audit project's process lifecycle or state directory.
 """
@@ -130,7 +130,7 @@ class BridgeClient:
             raise BridgeError("bridge 窗口列表格式不兼容")
         return [w for w in windows if w.get("connected") is True]
 
-    def _read_fixed(self, code: str, window_id: str | None = None) -> tuple[dict, str]:
+    def _execute_fixed(self, code: str, window_id: str | None = None) -> tuple[dict, str]:
         self.health()
         windows = self.windows()
         ids = [w.get("windowId") for w in windows]
@@ -144,13 +144,179 @@ class BridgeClient:
             raise BridgeError("指定的 EDA 窗口未连接")
         reply = self._request("/execute", {"code": code, "windowId": window_id})
         if not isinstance(reply, dict) or reply.get("success") is not True:
-            raise BridgeError(f"读取失败：{reply}")
+            raise BridgeError(f"固定操作失败：{reply}")
         if reply.get("windowId") != window_id:
             raise BridgeError("bridge 返回窗口与请求不一致")
         result = reply.get("result")
         if not isinstance(result, dict):
             raise BridgeError("bridge 上下文返回格式不兼容")
         return result, window_id
+
+    def _read_fixed(self, code: str, window_id: str | None = None) -> tuple[dict, str]:
+        return self._execute_fixed(code, window_id)
+
+    def drawing_snapshot(self, window_id: str | None = None) -> dict:
+        from .drawing_api import SNAPSHOT_QUERY, validate_snapshot
+        result, window_id = self._read_fixed(SNAPSHOT_QUERY, window_id)
+        snapshot = {"schema_version": 1, "kind": "drawing-source", "captured_at": now(),
+                    "bridge_port": self.port, "window_id": window_id, **result}
+        validate_snapshot(snapshot)
+        return snapshot
+
+    def drawing_components(self, window_id: str | None = None) -> dict:
+        from .drawing_api import COMPONENT_QUERY
+        result, window_id = self._read_fixed(COMPONENT_QUERY, window_id)
+        return {"captured_at": now(), "window_id": window_id, **result}
+
+    def drawing_svg(self, window_id: str | None = None) -> dict:
+        from .drawing_api import SVG_QUERY
+        result, window_id = self._read_fixed(SVG_QUERY, window_id)
+        return {"captured_at": now(), "window_id": window_id, **result}
+
+    def drawing_patch_properties(self, snapshot: dict, primitive_id: str, patch: dict) -> dict:
+        from .drawing_properties import property_script, verify_property_patch
+        result, window = self._execute_fixed(property_script(snapshot, primitive_id, patch), snapshot["window_id"])
+        if result.get("status") == "verified":
+            try:
+                after = {**snapshot, "identity": result.get("identity"), "source": result.get("source")}
+                result["source_verification"] = verify_property_patch(snapshot, after, primitive_id, patch)
+            except ValueError as exc:
+                result.update(status="uncertain", error=str(exc))
+        return {"captured_at": now(), "window_id": window, **result}
+
+    def drawing_set_attribute_visibility(self, snapshot: dict, attribute_id: str, visible: bool) -> dict:
+        from .drawing_display import visibility_script, verify_visibility
+        result, window = self._execute_fixed(
+            visibility_script(snapshot, attribute_id, visible), snapshot["window_id"])
+        if result.get("status") == "readback":
+            try:
+                after = {**snapshot, "identity": result["identity"], "source": result["source"]}
+                result["verification"] = verify_visibility(snapshot, after, attribute_id, visible)
+                result["status"] = "verified"
+            except ValueError as exc:
+                result.update(status="uncertain", error=str(exc))
+        return {"captured_at": now(), "window_id": window, **result}
+
+    def drawing_remove_redundant_ground_flag(self, snapshot: dict, flag_id: str, wire_id: str) -> dict:
+        from .drawing_flags import remove_redundant_ground_script, verify_ground_removal
+        result, window = self._execute_fixed(
+            remove_redundant_ground_script(snapshot, flag_id, wire_id), snapshot["window_id"])
+        if result.get("status") == "readback":
+            try:
+                after = {**snapshot, "identity": result["identity"], "source": result["source"]}
+                result["verification"] = verify_ground_removal(snapshot, after, flag_id, wire_id)
+                result["status"] = "verified"
+            except ValueError as exc:
+                result.update(status="uncertain", error=str(exc))
+        return {"captured_at": now(), "window_id": window, **result}
+
+    def drawing_frame_components(self, snapshot: dict, primitive_ids: list) -> dict:
+        from .drawing_properties import frame_components_script
+        result, window = self._execute_fixed(frame_components_script(snapshot, primitive_ids), snapshot["window_id"])
+        return {"captured_at": now(), "window_id": window, **result}
+
+    def drawing_translate(self, snapshot: dict, primitive_id: str, dx: float, dy: float) -> dict:
+        from .drawing_layout import translation_script, verify_translation
+        result, window = self._execute_fixed(translation_script(snapshot, primitive_id, dx, dy), snapshot['window_id'])
+        if result.get('status') == 'readback':
+            try:
+                after = {**snapshot, 'identity': result['identity'], 'source': result['source']}
+                result['verification'] = verify_translation(snapshot, after, primitive_id, dx, dy)
+                result['status'] = 'verified'
+            except ValueError as exc:
+                result.update(status='uncertain', error=str(exc))
+        return {'captured_at':now(), 'window_id':window, **result}
+
+    def search_drawing_devices(self, keyword: str, window_id: str | None = None) -> dict:
+        from .drawing_api import device_search_script
+        result, window_id = self._read_fixed(device_search_script(keyword), window_id)
+        return {"captured_at": now(), "window_id": window_id, "keyword": keyword, **result}
+
+    def drawing_device_details(self, library_uuid: str, device_uuid: str, window_id: str | None = None) -> dict:
+        from .drawing_api import device_details_script
+        result, window_id = self._read_fixed(device_details_script(library_uuid, device_uuid), window_id)
+        return {"captured_at": now(), "window_id": window_id, **result}
+
+    def drawing_device_archive(self, library_uuid: str, device_uuid: str, window_id: str | None = None) -> dict:
+        from .drawing_api import device_archive_script
+        result, window_id = self._read_fixed(device_archive_script(library_uuid, device_uuid), window_id)
+        return {"captured_at": now(), "window_id": window_id, **result}
+
+    def _place_component(self, snapshot: dict, parameters: dict) -> dict:
+        from .drawing_api import placement_script
+        from .drawing_library import verify_mapping
+        script = placement_script(snapshot, parameters)
+        # Exported project provenance is checked before and after the single write.
+        # The editor has no transaction lock across these read-only calls.
+        try:
+            verify_mapping(self.drawing_project_info(snapshot["window_id"]), snapshot, parameters)
+        except (BridgeError, ValueError) as exc:
+            return {"status": "blocked", "attempted": False, "error": "创建前工程来源核验失败：" + str(exc)}
+        result, _ = self._execute_fixed(script, snapshot["window_id"])
+        if result.get("status") == "verified":
+            try:
+                after = {**snapshot, "identity": result.get("identity"), "source": result.get("source")}
+                record = self.drawing_project_info(snapshot["window_id"])
+                # Keep the exact post-write export even if its mapping is invalid.
+                result["project_evidence"] = record
+                result["mapping_verified"] = verify_mapping(record, after, parameters)
+            except (BridgeError, ValueError) as exc:
+                result.update(status="uncertain", error="创建后工程来源核验失败：" + str(exc))
+        return result
+
+    def _circuit_operation(self, snapshot: dict, operation: dict) -> dict:
+        from .drawing_circuit import operation_script, inspect_library, library_evidence
+        from .drawing_api import comparable_source
+        p = operation["parameters"]
+        # All live preparation is read-only. No automatic retry after /execute.
+        if operation["operation"] == "place_component":
+            try:
+                expected = library_evidence(p)[1]
+                live = self.drawing_device_archive(p["library_uuid"], p["device_uuid"], snapshot["window_id"])
+                if inspect_library(live, p) != expected:
+                    raise ValueError("实时库器件与方案依据不一致")
+            except (ValueError, BridgeError) as exc:
+                return {"status": "blocked", "attempted": False, "error": str(exc)}
+        result, _ = self._execute_fixed(operation_script(snapshot, operation), snapshot["window_id"])
+        if result.get("status") == "verified" and operation["operation"] == "place_component":
+            try:
+                evidence = self.drawing_project_info(snapshot["window_id"])
+                result["project_evidence"] = evidence
+                if comparable_source(evidence["source"]) != comparable_source(result["source"]):
+                    raise ValueError("创建后工程取证期间文档源变化")
+            except (ValueError, BridgeError) as exc:
+                result.update(status="uncertain", error=str(exc))
+        return result
+
+    def drawing_circuit_audit(self, snapshot: dict) -> dict:
+        from .drawing_circuit import audit_script
+        result, window = self._read_fixed(audit_script(snapshot), snapshot["window_id"])
+        return {"captured_at": now(), "window_id": window, **result}
+
+    def drawing_relocate_component(self, snapshot: dict, primitive_id: str,
+                                   project_device_uuid: str, from_state: dict,
+                                   to_state: dict) -> dict:
+        from .drawing_circuit import relocate_component_script, verify_relocation
+        result, window = self._execute_fixed(
+            relocate_component_script(snapshot, primitive_id, project_device_uuid,
+                                      from_state, to_state), snapshot["window_id"])
+        if result.get("status") == "verified":
+            try:
+                result["verified_snapshot"] = verify_relocation(
+                    result, snapshot, primitive_id, from_state, to_state)
+            except ValueError as exc:
+                result.update(status="uncertain", error="独立源回读失败：" + str(exc))
+        return {"captured_at": now(), "window_id": window, **result}
+
+    def drawing_pins(self, primitive_id: str, window_id: str | None = None) -> dict:
+        from .drawing_api import component_pins_script
+        result, window_id = self._read_fixed(component_pins_script(primitive_id), window_id)
+        return {"captured_at": now(), "window_id": window_id, **result}
+
+    def drawing_project_info(self, window_id: str | None = None) -> dict:
+        from .drawing_api import PROJECT_LIBRARY_QUERY
+        result, window_id = self._read_fixed(PROJECT_LIBRARY_QUERY, window_id)
+        return {"captured_at": now(), "window_id": window_id, **result}
 
     def schematic(self, window_id: str | None = None) -> dict:
         from .schematic import SCHEMATIC_QUERY, make_snapshot
