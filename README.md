@@ -10,6 +10,8 @@
 
 从 [Agent 指引](docs/agent-guide.md) 开始；[选型方法](docs/playbooks/selection.md) 与 [拓扑方法](docs/playbooks/topology.md) 给出具体步骤。新任务的 brief 自动附上对应指引。
 
+PCB 采用“约束先行、路径驱动、分层复查”：工况/封装与制造规则 → 机械/分区/布局 → 关键回路和普通布线 → 回流/铺铜 → 投板复核 → 样板实测与改版。方法综合 KiCad、Altium、TI、Analog Devices 和 JLCPCB 的公开资料，各步骤附产物、取舍和证据要求。`guide --mode pcb` 会带入更新后的指引；当前 PCB 能力为受限读取和建议，PCB 绘制及检查由 EasyEDA 客户端完成。[PCB 设计方法与来源](docs/pcb-design-method.md) · [PCB 操作指引](docs/playbooks/pcb.md)
+
 项目级设计框架提供离线档案、六阶段工作指引、记录缺项审查、显式依赖影响分析和可追溯修订归档：`new-project`、`project-guide`、`project-review`、`project-impact`、`project-revise`、`validate-project`。参见[项目设计方案](docs/project-design.md)与[阶段指引](docs/project-stages.md)。它不自动判定阶段通过或修改 CAD。
 
 自动绘图触发规则：明确提出辅助绘制后，先形成可审阅的操作方案；用户认可方案后，允许在方案范围内执行，不为每一步重复询问。目标文档或方案范围变化时暂停并更新方案。新项目默认 `explicit_batch`，要求方案认可、操作范围和目标快照约束。原理图器件放置执行器 v2 已实现工程 DEVICE 来源映射、API/画布角度换算和完整引脚回读检查，通过单次实机创建 R5 的独立回查（请求90°/画布270°，不镜像，BOM/PCB关闭）；其余组合尚未实测，首次 R4 的旧执行结果仍为 uncertain。
