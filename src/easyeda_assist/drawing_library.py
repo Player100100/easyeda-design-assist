@@ -90,7 +90,7 @@ def device_sources(archive_base64: str) -> dict[str, str]:
     return result
 
 
-def verify_mapping(record: dict, snapshot: dict, parameters: dict) -> dict:
+def verify_mapping(record: dict, snapshot: dict, parameters: dict, *, editor_version=VERIFIED_EDITOR_VERSION) -> dict:
     """Require provenance and a stable page from the same window and project."""
     if (not isinstance(record, dict) or record.get("identity") != snapshot["identity"] or
             record.get("window_id") != snapshot["window_id"] or
@@ -98,9 +98,9 @@ def verify_mapping(record: dict, snapshot: dict, parameters: dict) -> dict:
             comparable_source(record["source"]) != comparable_source(snapshot["source"])):
         raise ValueError("工程库证据与目标窗口、身份或文档源不一致")
     info = record.get("project_info")
-    if not isinstance(info, dict) or info.get("editorVersion") != VERIFIED_EDITOR_VERSION:
+    if not isinstance(info, dict) or info.get("editorVersion") != editor_version:
         raise ValueError("工程库证据的编辑器版本尚未核验")
-    if "current_editor_version" in record and record["current_editor_version"] != VERIFIED_EDITOR_VERSION:
+    if "current_editor_version" in record and record["current_editor_version"] != editor_version:
         raise ValueError("运行中的编辑器版本尚未核验")
     encoded = record.get("archive_base64")
     if not isinstance(encoded, str) or len(encoded) > (MAX_ARCHIVE_BYTES + 2) // 3 * 4:
@@ -117,7 +117,7 @@ def verify_mapping(record: dict, snapshot: dict, parameters: dict) -> dict:
     if sources.get(local_uuid) != expected:
         raise ValueError("工程 DEVICE/META.source 未证明系统库与工程 UUID 映射")
     return {"project_device_uuid": local_uuid, "source": expected,
-            "editor_version": VERIFIED_EDITOR_VERSION,
+            "editor_version": editor_version,
             "archive_sha256": hashlib.sha256(archive).hexdigest()}
 
 

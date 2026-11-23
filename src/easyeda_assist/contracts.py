@@ -6,7 +6,7 @@ MODES = {
     "selection": ("关键器件选型", ["目标位号/位置及关联元件和网络", "电压/电流/温度工况", "封装/成本约束", "供货与替代要求"]),
     "topology": ("功能拓扑", ["目标功能及现有连接/上下游约束", "输入输出规格", "负载/频带/精度", "保护与故障工况"]),
     "schematic": ("原理图局部建议", ["目标位号/网络与关联连接", "器件手册", "保护需求/接口对端"]),
-    "pcb": ("PCB布线与铺铜建议", ["目标网络/元件及实际几何", "板层/叠层/规则", "电流/速率/回流要求"]),
+    "pcb": ("PCB布局、关键网络与布线协作", ["已完成原理图及对应PCB基线", "整板/部分/线路建议/布局关键网络范围", "板层/叠层/制造规则", "电流/边沿/速率/回流与验证要求"]),
     "local-check": ("局部修改检查", ["改前/改后版本", "修改对象与关联网络", "预期行为和验证要求"]),
 }
 TASK_STATES = {"draft", "analyzing", "needs_input", "ready_for_user", "accepted", "rejected", "deferred"}
@@ -80,6 +80,9 @@ def validate_task(task):
         require(nonempty(task.get(key)), f"任务缺少 {key}")
     require(task.get("mode") in MODES, "未知任务模式")
     require(task.get("status") in TASK_STATES, "未知任务状态")
+    if "workflow" in task:
+        from .workflow import validate_workflow
+        validate_workflow(task["workflow"])
     for key in ("constraints", "missing_inputs"):
         require(strings(task.get(key)), f"{key} 必须是字符串数组")
     context = task.get("context")

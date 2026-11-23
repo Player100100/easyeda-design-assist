@@ -20,7 +20,8 @@ from .drawing_source import records, verify_addition, verify_wire_merge, wire_se
 from .storage import digest, external, read_json
 
 CONTRACT = "schematic-circuit-v3"
-OPERATIONS = {"place_component", "add_wire", "place_net_flag"}
+from .operations import operation_names
+OPERATIONS = operation_names(CONTRACT)
 
 
 def _number(value):
@@ -380,7 +381,7 @@ try{
  let created;
  if(kind==='place_component')created=await eda.sch_PrimitiveComponent.create(
    {libraryUuid:p.library_uuid,uuid:p.device_uuid},p.x,p.y,p.sub_part_name,p.requested_api_rotation,false,p.add_into_bom,p.add_into_pcb);
- else if(kind==='add_wire')created=await eda.sch_PrimitiveWire.create(p.line,p.net);
+ else if(kind==='add_wire')created=await eda.sch_PrimitiveWire.create(p.line,input.inherit_net?undefined:p.net);
  else if(kind==='place_net_flag')created=await eda.sch_PrimitiveComponent.createNetFlag(p.identification,p.net,p.x,p.y,p.requested_api_rotation,false);
  else throw new Error('不支持的固定操作');
  if(!created)throw new Error('创建无返回，写入状态未知');
@@ -406,6 +407,7 @@ try{
     const device=item.getState_Component();
     Object.assign(observed,{library_uuid:device?.libraryUuid,device_uuid:device?.uuid,sub_part_name:item.getState_SubPartName()??null,
      designator:item.getState_Designator()??null,add_into_bom:item.getState_AddIntoBom(),add_into_pcb:item.getState_AddIntoPcb()});
+    if(input.require_unique_id)observed.unique_id=item.getState_UniqueId()??null;
    }
    const objects=await eda.sch_PrimitiveComponent.getAllPinsByPrimitiveId(primitiveId);
    if(!Array.isArray(objects)||objects.length>500)throw new Error('引脚回读不兼容');
@@ -416,7 +418,9 @@ try{
   const fingerprint=JSON.stringify({...last,source:comparable(last.source)});
   equal=fingerprint===previous?equal+1:0;previous=fingerprint;
   const ready=kind!=='place_component'||(typeof observed.designator==='string'&&/^[A-Za-z]+[0-9]+$/.test(observed.designator)&&(p.designator===undefined||observed.designator===p.designator));
-  if(equal>=2&&ready)return {status:'verified',attempted,primitive_id:primitiveId,...last};
+  const uniqueReady=!input.require_unique_id||kind!=='place_component'||(typeof observed.unique_id==='string'&&observed.unique_id.trim());
+  if(equal>=2&&input.require_unique_id&&kind==='place_component')return {status:'created_pending_identity',attempted,primitive_id:primitiveId,...last};
+  if(equal>=2&&ready&&uniqueReady)return {status:'verified',attempted,primitive_id:primitiveId,...last};
   await new Promise(resolve=>setTimeout(resolve,250));
  }
  throw new Error('创建后的源或属性未在限定读取时间内稳定');
@@ -426,6 +430,7 @@ try{
 
 _AUDIT_QUERY = _IDENTITY + r"""
 const before=await stable(input.identity);
+const editorVersion=eda.sys_Environment.getEditorCurrentVersion();
 if(comparable(before.source)!==comparable(input.source))throw new Error('文档源已变化');
 const file=await eda.sch_ManufactureData.getNetlistFile('design-assist','JLCEDA');
 if(!file||!Number.isFinite(file.size)||file.size>20971520)throw new Error('网表缺失或超过20MiB');
@@ -435,8 +440,9 @@ const errors=await eda.sch_Drc.check(true,false,true);
 if(!Array.isArray(errors)||errors.length>5000||errors.some(e=>!e||typeof e!=='object'||!['fatalError','error','warn'].includes(e.type)))throw new Error('DRC返回格式不兼容');
 const after=await stable(input.identity);
 if(comparable(before.source)!==comparable(after.source))throw new Error('审计期间文档源变化');
+if(eda.sys_Environment.getEditorCurrentVersion()!==editorVersion)throw new Error('审计期间编辑器版本变化');
 return {identity:after.identity,source:after.source,raw_netlist:raw,
- drc:errors,drc_passed:errors.length===0};
+ editor_version:editorVersion,drc:errors,drc_passed:errors.length===0};
 """
 
 
@@ -606,16 +612,25 @@ def audit_circuit(reply: dict, snapshot: dict, plan: dict) -> dict:
             "limitations": ["网表只证明 API 导出连接；DRC 不等于电气完整性/板级验证。", "DRC 可能包含原有工程问题。"]}
 
 
-def operation_script(snapshot: dict, op: dict) -> str:
+def operation_script(snapshot: dict, op: dict, *, editor_version=VERIFIED_EDITOR_VERSION, inherit_net=False) -> str:
     validate_snapshot(snapshot)
     validate_operation(op)
-    payload = {"identity": snapshot["identity"], "source": snapshot["source"], "editor_version": VERIFIED_EDITOR_VERSION,
+    from .operations import SOURCE_VERSION
+    if editor_version not in {VERIFIED_EDITOR_VERSION, SOURCE_VERSION}:
+        raise ValueError("未实现的电路编辑器版本")
+    if type(inherit_net) is not bool or (inherit_net and (editor_version != SOURCE_VERSION or op["operation"] != "add_wire")):
+        raise ValueError("继承旧网名仅适用于4.1.100支路导线")
+    payload = {"identity": snapshot["identity"], "source": snapshot["source"], "editor_version": editor_version,
                "operation": op["operation"], "parameters": op["parameters"]}
+    if editor_version == SOURCE_VERSION:
+        payload["require_unique_id"] = True
+    if inherit_net:
+        payload["inherit_net"] = True
     literal = json.dumps(json.dumps(payload, ensure_ascii=True, allow_nan=False), ensure_ascii=True)
     return "const input=JSON.parse(" + literal + ");" + _QUERY
 
 
-def verify_reply(reply: dict, before: dict, op: dict) -> dict:
+def verify_reply(reply: dict, before: dict, op: dict, *, editor_version=VERIFIED_EDITOR_VERSION) -> dict:
     p, kind = op["parameters"], op["operation"]
     if reply.get("status") != "verified" or reply.get("attempted") is not True:
         raise ValueError("操作未通过回读")
@@ -688,5 +703,5 @@ def verify_reply(reply: dict, before: dict, op: dict) -> dict:
             attrs = delta["attributes"]
             if attrs.get("Device",{}).get("value") != observed["device_uuid"] or attrs.get("Designator",{}).get("value") != observed["designator"]:
                 raise ValueError("器件源身份/位号与回读不一致")
-            verify_mapping(reply.get("project_evidence"),after,{**p,"expected_project_device_uuid":observed["device_uuid"]})
+            verify_mapping(reply.get("project_evidence"),after,{**p,"expected_project_device_uuid":observed["device_uuid"]},editor_version=editor_version)
     return after

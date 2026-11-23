@@ -1,8 +1,26 @@
 # Agent 辅助绘板指引
 
+原理图完成后，PCB 任务按[PCB 自动化契约](pcb-automation.md)选择整板、部分、线路建议或布局/关键网络范围。先采集原理图网表和完整 PCB 基线，再执行范围、映射、层叠与规则检查；认可后才调用固定 PCB 适配器，写后重新读取完整源和详细 DRC。
+
+已有网络新增支路使用 v5，严格保持旧器件完整网表和详细 DRC。目标线组接触其他线组时预检拒绝。有图框的页面通过同源原生 SVG 核对内框及标题栏净距。[契约与实机复测](branch-editing.md)
+
 本项目为 agent 提供工程思路与信息获取工具，弥补辅助绘板时的方法缺口。推理由 agent 围绕绘制者的问题完成；模式是工作指引入口，不是自动选型或自动拓扑引擎。先读取本指引，再读取对应 playbook。
 
-PCB 任务使用[PCB playbook](playbooks/pcb.md)，复杂整板设计再读 `docs/pcb-design-method.md`（[方法与来源](pcb-design-method.md)）：先确定制造/层叠与机械约束，再按电源、信号及返回路径布局和布线，投板前独立核对制造包，样板回来后实测。局部任务只走相关步骤。当前没有 PCB 写入和完整几何，原理图 `audit` 不能代替 PCB DRC。
+PCB 任务使用[PCB playbook](playbooks/pcb.md)，复杂整板设计再读 `docs/pcb-design-method.md`（[方法与来源](pcb-design-method.md)）：先确定制造/层叠与机械约束，再按电源、信号及返回路径布局和布线，投板前独立核对制造包，样板回来后实测。四层板及两层升四层另读[四层设计指导](pcb-four-layer.md)，先确定参考平面、层用途和换层回流，保护声明的连续地层，分别核验 CAD 连接与物理设计。局部任务只走相关步骤。PCB 通过 `pcb-capture` 读取完整源及固定几何集合，实际覆盖看读取错误；实验性写入的实现和实机验证状态分别记录，原理图 `audit` 不能代替 PCB DRC。
+
+先区分交互意图、分析尺度和工程问题：默认 `advice`，明确协助绘制请求后准备 `collaborative` 具体方案；分析从 `component/module/board/product` 中选择最小充分范围，六种 `mode` 仍用于选择 playbook。可用 `workflow --scope ... --signal ... --missing ...` 获取五步循环与查证提示。信号由 Agent 据实登记，工具不会自动发现耦合或证明输入充分。模式与范围不构成写入许可。
+
+执行前先看 `capabilities --editor-version <实际构建>`，区分策略允许、已有实现和已验证参数。新版 Source 属性适配器可预览但当前关闭，不得为完成任务自行开放。`query` 是固定读取的统一入口，旧命令继续可用；缺项/错误与原始返回须一起保留。持续设计用 `new-drawing-plan` 的任务/建议/决策引用及 `drawing-trace` 保留来源和反馈；旧档案不强制迁移。详见[首期构建说明](workflow-build.md)。
+
+非空白页空闲区域的独立模块新增使用[增量编辑 v4](incremental-editing.md)，不套用 v3 空白页限制。先采集完整基线、声明编辑区域及独立网名；保持旧记录、完整旧网表和详细 DRC。4.1.100 三电阻闭环已实测，不能据此承诺旧网络重接或旧对象移动/删除。创建后的位号/Unique ID 采用跨请求只读等待；创建不重试。用户明确委托自主实验时，记录原话和前瞻方案并继续，不重复询问已授权事项。
+
+局部变更前后可用 `query --kind audit --save` 采集详细证据，再用 `compare-design-audits ... --save` 比较；缺少规则、图元或 sheet 的 DRC 保留未匹配。执行后运行 `drawing-feedback` 查看后续动作和受影响对象，需要时附与本次执行前后源绑定的 `--comparison`。派生刷新证据未知时继续复核，不能因 `no_observed_regressions=true` 宣称完成。见[差分与反馈](audit-and-feedback.md)。
+
+Source 隔离试验前可用 `prepare-source-validation` 从同源的 Source/audit 查询准备单属性候选，修改后用 `check-source-validation` 检查新值是否进入导出。候选不构成认可；属性观察通过也不代表 DRC 已刷新或 Source 写入已实测，详见[单属性验收准备](source-validation.md)。
+
+当前 `Agent_test` 工程已获用户明确测试授权，U2 Name 写入/恢复实测发现 `zIndex` 副作用，正式适配器仍关闭。可在已授权范围用独立 `execute-source-trial` 完成绑定 case 的单次实验；未知结果必须完整复核现场，另写 resolution，保留历史结果/锁，不自动重试或回滚。最终 Name/网表/DRC 恢复不等于完整源恢复，须核对残留差异。详细边界与证据见[实测记录](source-validation.md)。
+
+后续已修复该层级残留并完成[经典属性接口实验](source-experiment.md)，完整源、网表及详细 DRC 最终恢复最初基线。新实验 CLI 默认 `canvas-attribute`，通过唯一已有属性的固定 `get/modify` 保留层级，后端显式留档，不能在失败后自动换接口。`check-source-roundtrip` 核对预先声明的详细 DRC 响应与精确恢复，不能据此把普通门禁或工程任务标为通过。正式 Source 接口继续关闭；不要把“尚有源残留”作为当前状态，也不要泛化为所有属性已验证。
 
 ## 从问题到绘制建议
 
@@ -15,7 +33,7 @@ PCB 任务使用[PCB playbook](playbooks/pcb.md)，复杂整板设计再读 `doc
 5. 按问题查资料：从网表 props.Datasheet 或所选元件 OtherProperty 中寻找手册链接，核对完整型号、厂商及修订。链接可交给当前 agent 的网页/PDF工具访问；本 CLI 不自动联网下载。需要稳定复查时 `import-datasheet` 保留本地原件；`datasheet-search` 定位、`datasheet-page` 阅读完整页，图表用 `--render` 查看原页。不要为了形成报告而预先摘录整本手册。
 6. 计算最坏工况，写出公式、单位、输入来源及裕量依据；区分典型值、保证值、绝对最大额定值和推荐工作范围。使用相同工况比较可行方案，说明取舍及不适用条件。
 7. 输出可操作的绘制方案：目标位置、器件角色、具体连接、值或选值范围、局部布局约束、风险与待验证项。未核对的引脚号和数值保持待定，不把概念方案写成可直接照抄的最终电路。
-8. 用户明确要求辅助绘制时，按 `docs/autodraw-policy.md` 先输出具体方案并等待认可；认可后允许在方案内完成操作，无需逐项重复询问。方案外变化、目标文档变化或影响结论的新信息出现时先暂停并更新方案。v2 器件放置已通过单器件实测；v3 实验性支持空白原理图的器件、网络标号和导线，契约和限制见 `docs/circuit-executor.md`。v3 尚未实机验证，不根据模拟测试宣布画布完成。绘制后检查受影响连接、工况和保护路径；仍需冻结版本独立审核。
+8. 用户明确要求辅助绘制时，按 `docs/autodraw-policy.md` 先输出具体方案并等待认可；认可后允许在方案内完成操作，无需逐项重复询问。方案外变化、目标文档变化或影响结论的新信息出现时先暂停并更新方案。v2 器件放置已通过单器件实测；v3 实验性支持器件、网络标号和导线新增，契约和限制见 `docs/circuit-executor.md`。v3 有历史真实尝试与局部修复，通用端到端实机验收未完成，不根据模拟测试宣布画布完成。绘制后检查受影响连接、工况和保护路径；仍需冻结版本独立审核。
 
 ## 建议记录
 

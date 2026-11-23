@@ -6,15 +6,20 @@ from pathlib import Path
 from .project import DRAWING_OPERATIONS, object_digest, text_value, validate_project
 from .storage import external, initialize, new_id, now, write_new
 from .drawing_api import SUPPORTED_OPERATIONS
+from .drawing_readability import layout_review
+from .operations import capabilities
+from .traceability import make_origin, validate_origin
 
 
-def new_drawing_plan(project: dict, request: str) -> Path:
+def new_drawing_plan(project: dict, request: str, *, task_path=None, recommendation_ids=(), decision_ids=()) -> Path:
     validate_project(project)
     if (project.get("drawing_policy") or {}).get("mode") == "off":
         raise ValueError("项目已关闭绘图计划，请先调整 drawing_policy")
     if not text_value(request):
         raise ValueError("绘图请求不能为空")
-    plan = {"schema_version": 1, "project_id": project["id"], "created_at": now(),
+    origin = make_origin(project, task_path, recommendation_ids, decision_ids)
+    plan = {"schema_version": 2, "interaction": "collaborative", "origin": origin,
+            "project_id": project["id"], "created_at": now(),
             "request": request.strip(), "target": {"window_id": "", "project_uuid": "",
             "document_uuid": "", "domain": "", "snapshot_path": "", "snapshot_sha256": ""},
             "operations": [], "evidence": [], "unresolved": [], "readback_plan": "",
@@ -25,8 +30,12 @@ def new_drawing_plan(project: dict, request: str) -> Path:
 
 def review_drawing_plan(project: dict, plan: dict) -> dict:
     validate_project(project)
-    if not isinstance(plan, dict) or type(plan.get("schema_version")) is not int or plan["schema_version"] != 1:
-        raise ValueError("绘图计划 schema_version 必须为 1")
+    if not isinstance(plan, dict) or type(plan.get("schema_version")) is not int or plan["schema_version"] not in (1, 2):
+        raise ValueError("绘图计划 schema_version 必须为 1 或 2")
+    if plan["schema_version"] == 2:
+        if plan.get("interaction") != "collaborative":
+            raise ValueError("可执行绘图计划必须明确为 collaborative")
+        validate_origin(project, plan.get("origin"), check_files=False)
     if plan.get("project_id") != project["id"]:
         raise ValueError("绘图计划与项目 ID 不一致")
     if not text_value(plan.get("request")) or not text_value(plan.get("created_at")):
@@ -80,11 +89,15 @@ def review_drawing_plan(project: dict, plan: dict) -> dict:
             findings.append("缺少 " + field)
     # No approval data participates in the digest; reporting is never approval verification.
     plan_hash = object_digest({k: v for k, v in plan.items() if k != "approval"})
-    return {"project_id": project["id"], "policy_mode": policy["mode"],
+    report = {"project_id": project["id"], "policy_mode": policy["mode"],
             "plan_sha256": plan_hash, "findings": findings,
             "record_complete": not findings, "policy_findings": policy_findings,
             "within_policy_scope": not policy_findings, "execution_available": False,
             "approval_verified": False, "supported_execution_operations": SUPPORTED_OPERATIONS[:],
+            "capabilities": capabilities(),
             "limitations": ["只检查记录格式和策略范围，未读取目标快照或核验工程正确性。",
                             "此离线检查不启用执行器；填写 approval 不能构成授权验证或触发执行。",
                             "agent 须核对真实用户认可记录，才能经已核验的 API 执行方案范围内写入。"]}
+    if target.get("domain") == "schematic":
+        report["layout_review"] = layout_review()
+    return report

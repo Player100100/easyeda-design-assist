@@ -9,14 +9,15 @@ from pathlib import Path
 
 from .contracts import validate_task
 from .storage import PROJECT_ROOT, digest, external, initialize, new_id, now, read_json, write_new
+from .operations import POLICY_OPERATIONS
+from .workflow import context as workflow_context, validate_workflow
 
 PROJECT_STATES = {"framing", "architecture", "design", "integration", "verification", "released"}
 PRIORITIES = {"must", "should", "could"}
 VERIFICATION_METHODS = {"analysis", "inspection", "demonstration", "test"}
 TASK_STATES = {"blocked", "ready", "in_progress", "done", "deferred"}
 DRAWING_POLICY_MODES = {"off", "draft_only", "explicit_batch"}
-DRAWING_OPERATIONS = {"place_component", "place_net_flag", "move_component", "rotate_component",
-                      "add_wire", "edit_wire", "set_property", "place_graphic"}
+DRAWING_OPERATIONS = POLICY_OPERATIONS
 SECTIONS = ("requirements", "modules", "interfaces", "budgets", "decisions", "tasks",
             "verifications", "sources", "risks")
 REFERENCE_FIELDS = {"requirement_ids": "requirements", "module_ids": "modules",
@@ -52,6 +53,11 @@ def validate_project(project):
             raise ValueError(f"项目缺少 {key}")
     if project.get("status") not in PROJECT_STATES:
         raise ValueError("项目状态无效")
+    if "workflow" in project:
+        validate_workflow(project["workflow"])
+    if "product_context" in project:
+        from .product import validate_product
+        validate_product(project["product_context"])
     if not isinstance(project.get("scope"), list) or not all(isinstance(x, str) and x.strip() for x in project["scope"]):
         raise ValueError("scope 必须是字符串数组")
     policy = project.get("drawing_policy")
@@ -174,7 +180,7 @@ def validate_project(project):
             raise ValueError("复核记录需 object、record 和 reviewed_against")
 
 
-def new_project(name: str, goal: str):
+def new_project(name: str, goal: str, *, interaction="advice", scope="board"):
     if not isinstance(name, str) or not name.strip() or not isinstance(goal, str) or not goal.strip():
         raise ValueError("项目名称和目标不能为空")
     timestamp = now()
@@ -182,6 +188,7 @@ def new_project(name: str, goal: str):
         "schema_version": 1, "id": new_id("project"), "name": name.strip(),
         "goal": goal.strip(), "status": "framing", "created_at": timestamp,
         "updated_at": timestamp, "scope": [], "assumptions": [], "open_questions": [],
+        "workflow": workflow_context(interaction, scope),
         "requirements": [], "modules": [], "interfaces": [], "budgets": [],
         "decisions": [], "tasks": [], "verifications": [], "sources": [],
         "risks": [], "change_log": [], "review_records": [], "pending_reviews": [],
@@ -229,9 +236,12 @@ def object_digest(item):
 def review_digest(project, key):
     # Bind reviews to the design snapshot, not just the unchanged consumer.
     # Otherwise an old review would clear a new upstream change automatically.
-    return object_digest({"object": key, "design": {
+    design = {
         field: project.get(field, [] if field in SECTIONS else None)
-        for field in (*SECTIONS, "name", "goal", "scope", "assumptions", "open_questions", "drawing_policy")}})
+        for field in (*SECTIONS, "name", "goal", "scope", "assumptions", "open_questions", "drawing_policy")}
+    # Do not invalidate historical reviews solely by adding absent optional keys.
+    design.update({field: project[field] for field in ("workflow", "product_context") if field in project})
+    return object_digest({"object": key, "design": design})
 
 
 def pending_reviews(project):
@@ -244,20 +254,9 @@ def pending_reviews(project):
     return pending
 
 
-def project_impact(previous, current):
-    """Conservative reachability, not an electrical or semantic change solver."""
-    validate_project(previous)
-    validate_project(current)
-    if previous["id"] != current["id"]:
-        raise ValueError("只能比较同一项目 id 的两个版本")
-    before, after = _object_map(previous), _object_map(current)
-    keys = set(before) | set(after)
-    changed = {key for key in keys if before.get(key) != after.get(key)}
-    global_fields = [key for key in ("name", "goal", "scope", "assumptions", "open_questions", "drawing_policy")
-                     if previous.get(key) != current.get(key)]
-    dependents = {key: set() for key in keys}
-    # Both graphs matter: a removed reference must still invalidate its consumer.
-    for objects in (before, after):
+def _dependency_graph(*object_maps):
+    dependents = {key: set() for objects in object_maps for key in objects}
+    for objects in object_maps:
         for consumer, item in objects.items():
             section = consumer.split("/", 1)[0]
             fields = dict(REFERENCE_FIELDS)
@@ -268,13 +267,41 @@ def project_impact(previous, current):
             for field, target in fields.items():
                 for ref in item.get(field, []):
                     dependents[f"{target}/{ref}"].add(consumer)
-    affected = set(keys) if global_fields else set(changed)
+    return dependents
+
+
+def _reachable(dependents, seeds):
+    affected = set(seeds)
     queue = deque(affected)
     while queue:
         for consumer in dependents[queue.popleft()]:
             if consumer not in affected:
                 affected.add(consumer)
                 queue.append(consumer)
+    return sorted(affected)
+
+
+def affected_objects(project, seeds):
+    validate_project(project)
+    objects = _object_map(project)
+    if not set(seeds) <= objects.keys():
+        raise ValueError("影响分析引用了不存在的项目对象")
+    return _reachable(_dependency_graph(objects), seeds)
+
+
+def project_impact(previous, current):
+    """Conservative reachability, not an electrical or semantic change solver."""
+    validate_project(previous)
+    validate_project(current)
+    if previous["id"] != current["id"]:
+        raise ValueError("只能比较同一项目 id 的两个版本")
+    before, after = _object_map(previous), _object_map(current)
+    keys = set(before) | set(after)
+    changed = {key for key in keys if before.get(key) != after.get(key)}
+    global_fields = [key for key in ("name", "goal", "scope", "assumptions", "open_questions", "drawing_policy", "workflow", "product_context")
+                     if previous.get(key) != current.get(key)]
+    # Both graphs matter: a removed reference must still invalidate its consumer.
+    affected = _reachable(_dependency_graph(before, after), keys if global_fields else changed)
     return {"project_id": current["id"], "global_changes": global_fields,
             "added": sorted(set(after) - set(before)), "removed": sorted(set(before) - set(after)),
             "changed": sorted(changed), "affected": sorted(affected),

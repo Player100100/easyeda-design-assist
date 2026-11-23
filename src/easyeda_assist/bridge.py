@@ -163,6 +163,15 @@ class BridgeClient:
         validate_snapshot(snapshot)
         return snapshot
 
+    def design_query(self, kind: str, window_id: str | None = None, primitive_id: str | None = None) -> dict:
+        from .queries import read_query
+        return read_query(self, kind, window_id, primitive_id)
+
+    def _source_properties(self, snapshot: dict, parameters: dict) -> dict:
+        from .source_properties import operation_script
+        result, window = self._execute_fixed(operation_script(snapshot, parameters), snapshot["window_id"])
+        return {"captured_at": now(), "window_id": window, **result}
+
     def drawing_components(self, window_id: str | None = None) -> dict:
         from .drawing_api import COMPONENT_QUERY
         result, window_id = self._read_fixed(COMPONENT_QUERY, window_id)
@@ -264,7 +273,7 @@ class BridgeClient:
                 result.update(status="uncertain", error="创建后工程来源核验失败：" + str(exc))
         return result
 
-    def _circuit_operation(self, snapshot: dict, operation: dict) -> dict:
+    def _circuit_operation(self, snapshot: dict, operation: dict, *, editor_version=None, inherit_net=False) -> dict:
         from .drawing_circuit import operation_script, inspect_library, library_evidence
         from .drawing_api import comparable_source
         p = operation["parameters"]
@@ -277,7 +286,21 @@ class BridgeClient:
                     raise ValueError("实时库器件与方案依据不一致")
             except (ValueError, BridgeError) as exc:
                 return {"status": "blocked", "attempted": False, "error": str(exc)}
-        result, _ = self._execute_fixed(operation_script(snapshot, operation), snapshot["window_id"])
+        options = {} if editor_version is None else {"editor_version": editor_version}
+        if inherit_net:
+            options["inherit_net"] = True
+        result, window = self._execute_fixed(operation_script(snapshot, operation, **options), snapshot["window_id"])
+        result = {**result, "window_id": window}
+        if editor_version is not None and result.get("status") == "created_pending_identity":
+            from .drawing_incremental import settle_created_component
+            creation = result
+            try:
+                result = settle_created_component(self, snapshot, operation, creation)
+            except Exception as exc:
+                # The write already happened. Keep its receipt/PID even if a
+                # later read fails unexpectedly; never retry the creation.
+                result = {**creation, "status": "uncertain", "creation_reply": creation,
+                          "error": "创建后的独立身份读取失败：" + str(exc)}
         if result.get("status") == "verified" and operation["operation"] == "place_component":
             try:
                 evidence = self.drawing_project_info(snapshot["window_id"])
@@ -317,6 +340,41 @@ class BridgeClient:
         from .drawing_api import PROJECT_LIBRARY_QUERY
         result, window_id = self._read_fixed(PROJECT_LIBRARY_QUERY, window_id)
         return {"captured_at": now(), "window_id": window_id, **result}
+
+    def pcb_capture(self, window_id: str | None = None, *, with_drc: bool = True) -> dict:
+        """Capture the complete fixed PCB read model and detailed DRC."""
+        from .pcb_api import capture_script
+        from .pcb import make_snapshot
+        old_timeout = self.timeout
+        try:
+            self.timeout = max(old_timeout, 180)
+            result, window = self._read_fixed(capture_script(with_drc), window_id)
+        finally:
+            self.timeout = old_timeout
+        return make_snapshot(result, window, self.port)
+
+    def pcb_operation(self, snapshot: dict, operation: dict) -> dict:
+        """Run one fixed PCB operation; never retries a write."""
+        from .pcb_api import operation_script
+        from .pcb import make_snapshot
+        old_timeout = self.timeout
+        try:
+            self.timeout = max(old_timeout, 180)
+            result, window = self._execute_fixed(
+                operation_script(snapshot, operation), snapshot["window_id"])
+        finally:
+            self.timeout = old_timeout
+        if isinstance(result.get("after"), dict) and isinstance(result["after"].get("source"), str):
+            try:
+                result["after"] = make_snapshot(result["after"], window, self.port)
+            except (ValueError, TypeError) as exc:
+                result.update(status="uncertain", error="PCB写后快照格式无效：" + str(exc))
+        return {"captured_at": now(), "window_id": window, **result}
+
+    def pcb_export(self, window_id: str | None = None) -> dict:
+        from .pcb_api import export_script
+        result, window = self._read_fixed(export_script(), window_id)
+        return {"captured_at": now(), "window_id": window, **result}
 
     def schematic(self, window_id: str | None = None) -> dict:
         from .schematic import SCHEMATIC_QUERY, make_snapshot

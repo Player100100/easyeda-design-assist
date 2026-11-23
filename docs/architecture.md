@@ -1,5 +1,7 @@
 # 架构
 
+PCB 自动化接入 `pcb_api.py`、`pcb.py` 和 `pcb_execution.py`：读取完整 PCB 模型及详细 DRC，绑定已完成原理图的焊盘网络映射，提供整板、局部、建议、布局关键网络计划及固定操作的认可、执行、源差异和 DRC 回读。PCB 适配器保留实验开关，已有4.1.100局部[工具链实测](pcb-live-verification.md)，未作为通用整板验收，契约与命令见[PCB自动化](pcb-automation.md)。
+
 ## 产品边界
 
 核心是为 agent 补充辅助绘板的工程思路与取证工具。用户提出选型/拓扑问题后，agent 查询关联元件、网络和手册，形成绘制方案。手册作为可随时访问的原件维护，按问题查询；推理和推荐由 agent 完成。
@@ -23,7 +25,7 @@
   └─ agent 据实执行约束分析、推导、方案比较和验证规划
         ↓
 数据适配层
-  ├─ EasyEDA bridge（固定读取与受限原理图新增操作）
+  ├─ EasyEDA bridge（固定读取、受限原理图新增及实验性 PCB 操作）
   ├─ 静态 BOM、手册、设计约束
   └─ 可复用的 epro2 解析/审核能力（暂不直接耦合）
         ↓
@@ -32,7 +34,29 @@
 
 当前已提供工程工作指引、连接查询、手册访问、任务编排、只读适配、受限写入和记录校验。交互推理由 agent 执行，字段完整性不能证明工程正确性。
 
+## 首期演进接入（2026-11-17）
+
+在原有执行器与证据目录上增量接入，入口与字段见[首期构建说明](workflow-build.md)：
+
+- `workflow.py`：独立表达 `advice`/`collaborative`、四级分析尺度、显式范围提升信号和五步循环；不替代工程判断或旧六阶段。
+- `operations.py`：统一策略操作名、适配器映射、客户端精确版本和验证边界；预检据此阻断关闭的适配器，固定写入脚本再次检查实时版本。
+- `queries.py`：把旧读取和固定 Source 读取包装为带来源、目标及缺项的结果，保留原始返回，不将多次查询描述为原子快照。
+- `traceability.py`：v2 计划绑定任务原始字节/建议摘要和项目决策摘要；预检检查失效，执行独立归档来源并通过 `drawing-trace` 反馈结果，不覆盖原决定。
+- `product.py`：可选板型、板卡实例、修订快照摘要与显式 pin map；项目上下文变更接入保守影响传播，不提供 CAD 多板事务。
+- `source_properties.py`：已有属性值的固定修改、预期状态等待和严格源差异核验；`dispatch_enabled=false`，详见[Source 契约](source-properties.md)。
+- `design_audit.py`：统一审计证据、组件/引脚连接及详细 DRC 差分，归档原始输入并在加载时重算；源稳定与派生刷新证据分别记录。
+- `feedback.py`：从执行及冻结建议生成独立后续动作，复用项目显式依赖传播复核对象；不覆盖决定或关闭执行锁。新增入口及验证边界见[差分与反馈](audit-and-feedback.md)。
+- `source_validation.py`：离线准备单属性试验候选，按唯一 Unique ID/位号/Device 绑定 Source 与网表，核对严格源差异与属性导出；DRC 刷新证据独立保持未知，见[验收准备](source-validation.md)。
+- `source_trial.py`：对明确授权的实验目标单次执行已展示的单属性 case，复用固定实现，独立保留授权、intent/reply 和观察；历史锁不覆盖，未知状态经完整现场复核另写 resolution。4.1.100 的 U2 Name 写入/恢复已实测，正向出现 `zIndex` 副作用且严格失败，正式 Source 调度继续关闭，见[实测与恢复](source-validation.md)。
+- 后续实验后端 `canvas-attribute`：在同一严格绑定/日志/源核验流程下，通过唯一 ATTR 的固定 `get/modify` 修改一个值，避开已观察的 Source 器件更新副作用；不在失败后自动切换。`source_repair.py` 仅用于完整归档约束的一条 Name 层级历史恢复，不能接收任意目标源码。`check_roundtrip` 分别核对属性刺激、详细 DRC 响应和完整恢复，原执行结果不覆盖；实测和命令见[修复与实验](source-experiment.md)。
+
+计划格式 v1/v2 与放置 v2、电路 v3、Source v1 适配器独立版本化。新认可仅排除明确列出的进度元数据，旧认可仍绑定完整项目；旧项目缺少新增可选字段时保留历史复核摘要。当前不新增跨批次执行语义、通用编辑能力或服务依赖。
+
 ## 核心对象
+
+2026-11-18 增加独立的已有网络支路 v5。`drawing_branch.py` 精确绑定旧线锚点，核验目标组边多重集、完整 getter 覆盖及完整旧器件网表，保留详细 DRC。目标组接触其他线组时拒绝。`drawing_frame.py` 从绑定的原生 SVG 提取内框和标题栏边界，供 v4/v5 预检和执行前复核使用。[已有网络支路和图框避让记录](branch-editing.md)
+
+2026-11-18 增加独立 `schematic-incremental-v4`，精确支持 4.1.100：`drawing_incremental.py` 绑定非空白页完整审计、清单及引脚几何，严格保护旧记录和完整旧网表，最终详细 DRC 必须逐项保持。bridge 在创建请求返回后用独立只读请求等待器件身份补齐；不重试写入。`drawing_incremental_cleanup.py` 仅处理另行明确授权和复核的实验清理，不进入正常调度。三电阻闭环 9 步实机及独立后查通过，范围见[增量编辑](incremental-editing.md)。这不改变旧 v2/v3 版本，也不开放正式 Source。
 
 - `project`：项目目标/范围、有来源的需求、模块职责与接口、预算、方案决策、风险、任务依赖和验证追踪。`project-guide` 提供六阶段方法，`project-review` 检查记录缺项与关联任务，`project-impact` 沿显式引用传播影响，`project-revise` 保留修订证据与待复核项。详见 [项目级设计框架](project-design.md)。这些命令离线工作，不要求 CAD 连接。
 - `drawing_plan`：目标身份、输入快照、用户请求、修改前后差异、依据、未决项及回读/失败处理记录。项目的 `drawing_policy` 管理触发与范围，`review-drawing-plan` 分别报告记录完整性和策略范围，不验证用户认可或执行 CAD。详见[自动绘图策略](autodraw-policy.md)。
@@ -41,7 +65,7 @@
 - `recommendation`：建议内容、对象定位、理由、证据、假设、风险、置信度、适用条件、验证动作及用户决定。
 - `evidence`：来源类型、文件/URL/器件型号、文档修订、页码/章节、摘录或计算输入。手册事实和工程假设必须可区分。
 
-任务状态采用 `draft → analyzing → needs_input / ready_for_user → accepted / rejected / deferred`。只有用户明确确认的决定才写成已采纳。绘图方案认可后可在方案范围内调用受限写接口；v2 器件放置已通过单器件实测，v3 空白原理图电路执行器为实验性实现，尚未实机验证。执行状态和锁语义见 `docs/circuit-executor.md`，实测范围见 `docs/live-api-verification.md`。
+任务状态采用 `draft → analyzing → needs_input / ready_for_user → accepted / rejected / deferred`。只有用户明确确认的决定才写成已采纳。绘图方案认可后可在方案范围内调用受限写接口；v2 器件放置已通过单器件实测，v3 电路执行器保留实验契约，已有历史尝试与局部修复，通用电路端到端实机验收尚未完成。执行状态和锁语义见 `docs/circuit-executor.md`，实测范围见 `docs/live-api-verification.md`。
 
 ## API 边界
 
@@ -63,6 +87,6 @@
 
 1. 用真实绘制问题验证选型/拓扑指引，改进缺项识别、连接追踪和输出方案。
 2. 完善手册来源发现和原页访问体验，保持型号、修订与工况可追溯。
-3. 验证选中图元详情、PCB 单位/层映射和完整几何读取，扩充只读取证能力。
-4. 用可追溯案例验证 PCB 回流、布线和铺铜指引；数值结论仍要求具体证据。
-5. 按[自动绘图策略](autodraw-policy.md)完成 v3 电路执行器真实 CAD 验证，重点核对库几何、网络标号引脚、导线源差异及网表/DRC。现有多页工程增量编辑、属性修改、PCB 自动布局/布线和 UI 扩展按实际需求评估。
+3. 在明确测试PCB上验证完整采集、单位、旋转和层映射，完成单器件和单段关键线的实机核对。
+4. 用可追溯案例实机验证 PCB 布局、布线、过孔、板框、铺铜和详细 DRC 闭环；数值结论仍要求具体证据。
+5. 基于已实测的[非空白页独立增量 v4](incremental-editing.md)扩展器件/角度和几何样本，再按需求评估接入既有网络、多页协同与已有对象编辑；v3 历史版本的通用验收独立保留。属性修改、PCB 自动布局/布线和 UI 扩展仍按实际需求验证。

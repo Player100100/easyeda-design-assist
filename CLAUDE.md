@@ -8,7 +8,7 @@
 
 - 未认可具体绘图方案时 API 访问只读；认可后遵循绘图策略执行。不得通过 bridge 执行任意用户/模型生成的 JavaScript；CLI 仅接入固定操作。
 - 自动绘图按 `docs/autodraw-policy.md` 执行：用户明确要求后先生成具体方案，展示对象、差异、目标文档和未决项；用户认可方案后，可在其范围内调用已核验的写入 API。方案外修改须更新方案并再次认可。
-- 写入适配器 v2 支持原理图器件放置，单器件实机验证已通过（90° 请求、270° 画布、BOM/PCB 关闭）；v3 实验性支持空白原理图新增器件、网络标号和导线，最终核对全部引脚网表及详细 DRC。v3 尚未实机验证，契约见 `docs/circuit-executor.md`；属性修改、PCB 写入未实现，不能根据模拟成功声称真实 CAD 已写入。
+- 写入适配器 v2 支持原理图器件放置，单器件实机验证已通过（90° 请求、270° 画布、BOM/PCB 关闭）；v3 实验性支持器件、网络标号和导线新增，最终核对全部引脚网表及详细 DRC。已有历史真实尝试与局部修复，通用电路端到端实机验收未完成，契约见 `docs/circuit-executor.md`。新版 Source 属性适配器已实现但 `dispatch_enabled=false`，真实隔离验证前不得开放。PCB 独立适配器已实现完整读取、四种用途计划与受限写入，具体方案认可后才可显式选择实验执行；目标 PCB 实机验收尚未完成，见 `docs/pcb-automation.md`，不能根据模拟成功声称真实 CAD 已写入。
 - 区分事实、建议、假设和未知。每条工程建议记录适用条件、证据来源、潜在风险、置信度和验证办法。
 - 不根据网名猜测功能，不把常见电路当成设计要求。器件参数引用具体手册版本、页码/章节；缺依据时标为待验证。
 - 选型建议同时考虑关键额定值、工作条件、封装/引脚、供货与替代风险；未核实时不声称可直接替换。
@@ -19,6 +19,13 @@
 
 ## 当前能力
 
+- PCB 4.1.100 已在用户明确限定的 `Agent_test` 工具样本验证局部读取、映射、移动旋转、顶底线、通孔、板框、铜区重建、单网络布线和制造导出。铜区自定义边框/优先级不兑现，已布线板的原生整板布局会断开既有铜，预检拒绝对应范围；具体参数见 `docs/pcb-live-verification.md`。不据此开放正式Source、不宣称高功率/高速或通用整板已验收。
+
+- 4.1.100 的 `schematic-branch-v5` 已实测一个电阻接入两个旧网络。目标组内精确核验 LINE 几何重分配，接触其他线组的目标提前拒绝。有框页基线附带同源原生 SVG，执行前核对 A4 图框和标题栏净距，新增支路已完成实机复测，见 `docs/branch-editing.md`。
+
+- 4.1.100 新增 `schematic-incremental-v4`，支持非空白页空闲区域独立模块新增；三电阻闭环 9 步已完成实机及独立回查，原电路源/完整网表/详细 DRC 保持。`capture-incremental-baseline` 采集完整基线，契约与证据见 `docs/incremental-editing.md`。已有网络重接、旧对象移动/删除和 PCB 写入未开放；正式 Source 仍关闭。
+- 首期模式/范围、能力目录、统一查询、建议—计划—结果追踪与可选多板记录见 `docs/workflow-build.md`。`workflow`、`capabilities`、`query`、`drawing-trace`、`product-review` 为新增入口；Source 属性契约与关闭边界见 `docs/source-properties.md`。
+- 已在明确授权的实验工程完成层级残留恢复和经典属性 Name/Value 往返。实验 CLI `execute-source-trial` 默认使用固定 `canvas-attribute` 后端，`check-source-roundtrip` 离线核对局部刺激及完整恢复；正式 Source 调度保持关闭，详见 `docs/source-experiment.md`。
 - `python -B src/design_assist.py init`：初始化外部数据目录。
 - `python -B src/design_assist.py status`：查询 bridge 与连接窗口状态。
 - `python -B src/design_assist.py connect`：复用或后台启动已安装的本地 bridge，等待 EDA API Gateway 接入；Windows 可运行 `start-api.cmd`。

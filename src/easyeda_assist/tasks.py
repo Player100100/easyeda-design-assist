@@ -6,13 +6,16 @@ from pathlib import Path
 from .contracts import MODES, validate_task
 from .guidance import guide
 from .storage import digest, external, initialize, new_id, now, read_json, write_new
+from .workflow import INTERACTIONS, context as workflow_context
 
 
-def create_task(mode: str, goal: str, constraints: list[str], context=None) -> Path:
+def create_task(mode: str, goal: str, constraints: list[str], context=None, *,
+                interaction="advice", scope="module", signals=(), missing=()) -> Path:
     task = {"schema_version": 1, "id": new_id("task"), "mode": mode,
             "goal": goal, "created_at": now(), "status": "draft",
             "context": context, "constraints": constraints,
-            "missing_inputs": list(MODES[mode][1]), "sources": [], "recommendations": []}
+            "missing_inputs": list(MODES[mode][1]), "sources": [], "recommendations": [],
+            "workflow": workflow_context(interaction, scope, signals, missing)}
     validate_task(task)
     root = external(initialize() / "tasks" / task["id"])
     root.mkdir(exist_ok=False)
@@ -21,6 +24,9 @@ def create_task(mode: str, goal: str, constraints: list[str], context=None) -> P
     write_new(root / "initial-context.json", context)
     (root / "brief.md").write_text(
         f"# {MODES[mode][0]}\n\n目标：{goal}\n\n"
+        f"交互模式：{INTERACTIONS[task['workflow']['interaction']]}（{task['workflow']['interaction']}）\n\n"
+        f"分析范围：{task['workflow']['analysis_scope']}；范围信号：{', '.join(task['workflow']['scope_signals']) or '无'}。\n\n"
+        "模式与分析范围不授予 CAD 写入权限；具体方案认可和执行预检仍独立进行。\n\n"
         "请按 docs/workflow.md 补充工况与来源，更新 task.json。初稿不包含分析结论。\n\n"
         "待补输入：\n\n" + "\n".join(f"- {x}" for x in task["missing_inputs"]) +
         "\n\n记录完整性校验：`python -B src/design_assist.py validate-task <task.json>`\n\n" + guide(mode),

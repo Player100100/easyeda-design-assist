@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "easyeda-design-assist"
 version = "0.1.0"
-description = "Read-only context and evidence-based design assistance workflow for EasyEDA"
+description = "Evidence-based design assistance and constrained schematic/PCB drawing for EasyEDA"
 requires-python = ">=3.11"
 dependencies = []
 

@@ -2,6 +2,21 @@
 
 `new-task` 创建 JSON 初稿。结论应在交互分析后补入 `recommendations` 和 `sources`，然后运行 `validate-task`。
 
+2026-11-17 起新任务增加可选 `workflow`，原任务 `mode` 与 `schema_version=1` 保持兼容；旧任务无此字段仍可读取：
+
+```json
+{
+  "interaction": "advice",
+  "analysis_scope": "module",
+  "scope_signals": [],
+  "missing_facts": []
+}
+```
+
+`interaction` 为 `advice/collaborative`；`analysis_scope` 为 `component/module/board/product`。范围信号必须被所声明尺度覆盖，不允许未知或重复信号。`missing_facts` 是下一步查证提示，不能代替原有 `missing_inputs`；后者仍控制任务与所选建议是否具备生成计划所需的输入。新任务 brief 显示交互模式、有效尺度和信号。
+
+新计划可通过 `origin.task` 保存任务绝对路径、文件原始字节 SHA256、任务 ID 和所选建议摘要，通过 `origin.decisions` 保存项目决策摘要。预检重新校验，任务文件任何字节变化或决策变化均要求复核。执行时另存原任务字节及结果来源，`drawing-trace` 返回反馈，不自动将任务或建议标为已验证/采纳。独立来源附件不会自动冻结；具体绘图方案仍需真实认可。见[首期构建](workflow-build.md)。
+
 每条 recommendation 至少包括：
 
 | 字段 | 含义 |
